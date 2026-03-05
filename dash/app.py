@@ -1,5 +1,5 @@
 """
-Plotly Dash dashboard for AcrobotSim double pendulum.
+Plotly Dash dashboard for AcrobatSim double pendulum.
 
 Connects to SystemSimulator TcpMonitor:
   - Port 9100: send tunable parameters
@@ -112,6 +112,14 @@ class SimulatorClient:
                 return []
             return list(buf)
 
+    def get_latest(self, name):
+        """Return the latest value of a signal, or None."""
+        with self.lock:
+            buf = self.history.get(name)
+            if buf is None or len(buf) == 0:
+                return None
+            return buf[-1]
+
     def close(self):
         self._running = False
         for s in (self._stream_sock, self._param_sock):
@@ -150,11 +158,11 @@ PARAM_SLIDERS = [
     ("l2",  0.1,  5.0, 0.1,  1.0,   "l2 [m]"),
     ("lc1", 0.05, 2.5, 0.05, 0.5,   "lc1 [m]"),
     ("lc2", 0.05, 2.5, 0.05, 0.5,   "lc2 [m]"),
-    ("I1",  0.001, 5.0, 0.001, 0.0833, "I1 [kg⋅m²]"),
-    ("I2",  0.001, 5.0, 0.001, 0.0833, "I2 [kg⋅m²]"),
+    ("I1",  0.001, 5.0, 0.001, 0.0833, "I1 [kg·m²]"),
+    ("I2",  0.001, 5.0, 0.001, 0.0833, "I2 [kg·m²]"),
     ("g",   0.0, 20.0, 0.01, 9.81,  "g [m/s²]"),
-    ("b1",  0.0,  5.0, 0.01, 0.1,   "b1 [N⋅m⋅s/rad]"),
-    ("b2",  0.0,  5.0, 0.01, 0.1,   "b2 [N⋅m⋅s/rad]"),
+    ("b1",  0.0,  5.0, 0.01, 0.1,   "b1 [N·m·s/rad]"),
+    ("b2",  0.0,  5.0, 0.01, 0.1,   "b2 [N·m·s/rad]"),
 ]
 
 IC_SLIDERS = [
@@ -182,11 +190,60 @@ sidebar_children.append(html.Hr())
 sidebar_children.append(html.H3("Initial Conditions"))
 for args in IC_SLIDERS:
     sidebar_children.append(make_slider(*args))
-sidebar_children.append(html.Br())
-sidebar_children.append(
-    html.Button("Reset", id="btn-reset", n_clicks=0,
-                style={"width": "100%", "padding": "8px", "fontSize": "14px"})
-)
+
+# Duration slider
+sidebar_children.append(html.Hr())
+sidebar_children.append(html.Label("Duration [s]", style={"fontSize": "12px", "fontWeight": "bold"}))
+sidebar_children.append(make_slider("duration", 1.0, 600.0, 1.0, 300.0, "Duration [s]"))
+
+# Simulation controls: Start / Stop / Reset buttons + status display
+sidebar_children.append(html.Hr())
+sidebar_children.append(html.Div([
+    html.Div([
+        html.Button(
+            "Start",
+            id="btn-start",
+            n_clicks=0,
+            style={
+                "backgroundColor": "#28a745", "color": "white", "border": "none",
+                "padding": "8px 20px", "fontSize": "14px", "fontWeight": "bold",
+                "borderRadius": "4px", "cursor": "pointer", "marginRight": "6px",
+            },
+        ),
+        html.Button(
+            "Stop",
+            id="btn-stop",
+            n_clicks=0,
+            style={
+                "backgroundColor": "#dc3545", "color": "white", "border": "none",
+                "padding": "8px 20px", "fontSize": "14px", "fontWeight": "bold",
+                "borderRadius": "4px", "cursor": "pointer", "marginRight": "6px",
+            },
+        ),
+        html.Button(
+            "Reset",
+            id="btn-reset",
+            n_clicks=0,
+            style={
+                "backgroundColor": "#6c757d", "color": "white", "border": "none",
+                "padding": "8px 20px", "fontSize": "14px", "fontWeight": "bold",
+                "borderRadius": "4px", "cursor": "pointer",
+            },
+        ),
+    ], style={"display": "flex", "justifyContent": "center", "marginBottom": "8px"}),
+    html.Div(
+        id="sim-status",
+        children="Idle",
+        style={
+            "textAlign": "center", "fontSize": "13px", "fontWeight": "bold",
+            "padding": "4px", "borderRadius": "4px", "backgroundColor": "#f0f0f0",
+        },
+    ),
+], style={"marginTop": "4px"}))
+
+# Hidden stores for click counts sent to Julia
+sidebar_children.append(dcc.Store(id="store-start-clicks", data=0))
+sidebar_children.append(dcc.Store(id="store-stop-clicks", data=0))
 
 app = Dash(__name__)
 app.layout = html.Div([
@@ -195,7 +252,8 @@ app.layout = html.Div([
         # Sidebar
         html.Div(sidebar_children,
                  style={"width": "260px", "padding": "10px",
-                        "overflowY": "auto", "borderRight": "1px solid #ccc"}),
+                        "overflowY": "auto", "borderRight": "1px solid #ccc",
+                        "height": "100vh"}),
         # Plot grid
         html.Div([
             html.Div([
@@ -212,29 +270,78 @@ app.layout = html.Div([
 
 # Collect all slider IDs
 ALL_SLIDER_IDS = [f"slider-{p[0]}" for p in PARAM_SLIDERS + IC_SLIDERS]
+ALL_SLIDER_IDS.append("slider-duration")
 
+
+# ---------------------------------------------------------------------------
+# Button click callbacks: increment stored click counts
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("store-start-clicks", "data"),
+    Input("btn-start", "n_clicks"),
+    prevent_initial_call=True,
+)
+def on_start_click(n):
+    return n
+
+
+@callback(
+    Output("store-stop-clicks", "data"),
+    Input("btn-stop", "n_clicks"),
+    prevent_initial_call=True,
+)
+def on_stop_click(n):
+    return n
+
+
+# ---------------------------------------------------------------------------
+# Main update callback
+# ---------------------------------------------------------------------------
 
 @callback(
     Output("graph-angles", "figure"),
     Output("graph-velocities", "figure"),
     Output("graph-torques", "figure"),
     Output("graph-phase", "figure"),
+    Output("sim-status", "children"),
+    Output("sim-status", "style"),
     Input("interval", "n_intervals"),
     Input("btn-reset", "n_clicks"),
     [State(sid, "value") for sid in ALL_SLIDER_IDS],
+    State("store-start-clicks", "data"),
+    State("store-stop-clicks", "data"),
 )
-def update_graphs(n_intervals, n_clicks, *slider_values):
+def update_graphs(n_intervals, n_clicks_reset, *args):
     global _prev_reset_clicks
+
+    n_sl = len(ALL_SLIDER_IDS)
+    slider_values = args[:n_sl]
+    start_clicks  = args[n_sl]
+    stop_clicks   = args[n_sl + 1]
+
     # Send params to simulator
     param_dict = {}
-    all_params = PARAM_SLIDERS + IC_SLIDERS
-    for (pid, *_rest), val in zip(all_params, slider_values):
+    phys_ic_params = PARAM_SLIDERS + IC_SLIDERS
+    for (pid, *_rest), val in zip(phys_ic_params, slider_values[:len(phys_ic_params)]):
         param_dict[pid] = float(val)
-    clicks = n_clicks or 0
+
+    # Duration slider (last in ALL_SLIDER_IDS)
+    dur_val = slider_values[len(phys_ic_params)]
+    param_dict["duration"] = float(dur_val) if dur_val is not None else 300.0
+
+    # Reset button (edge-detect via click count)
+    clicks = n_clicks_reset or 0
     param_dict["reset"] = 1.0 if clicks > _prev_reset_clicks else 0.0
     _prev_reset_clicks = clicks
+
     # Keep n_substeps at default
     param_dict["n_substeps"] = 10.0
+
+    # Start/stop commands (click counts; Julia detects rising counts)
+    param_dict["start_cmd"] = float(start_clicks or 0)
+    param_dict["stop_cmd"]  = float(stop_clicks or 0)
+
     client.send_params(param_dict)
 
     # Read history
@@ -246,7 +353,36 @@ def update_graphs(n_intervals, n_clicks, *slider_values):
     tau1 = client.get_history("can_torque.Tau1")
     tau2 = client.get_history("can_torque.Tau2")
 
-    n = len(time_data)
+    # Read simulation state from stream
+    running_val = client.get_latest("running")
+    elapsed_val = client.get_latest("elapsed")
+    duration_val = client.get_latest("duration")
+
+    is_running = running_val is not None and running_val >= 0.5
+    elapsed_s  = elapsed_val if elapsed_val is not None else 0.0
+    dur_s      = duration_val if duration_val is not None else param_dict["duration"]
+
+    if is_running:
+        status_text = f"Running: {elapsed_s:.1f} / {dur_s:.0f} s"
+        status_style = {
+            "textAlign": "center", "fontSize": "13px", "fontWeight": "bold",
+            "padding": "4px", "borderRadius": "4px",
+            "backgroundColor": "#d4edda", "color": "#155724",
+        }
+    elif elapsed_s > 0.5:
+        status_text = f"Finished: {elapsed_s:.1f} s"
+        status_style = {
+            "textAlign": "center", "fontSize": "13px", "fontWeight": "bold",
+            "padding": "4px", "borderRadius": "4px",
+            "backgroundColor": "#fff3cd", "color": "#856404",
+        }
+    else:
+        status_text = "Idle"
+        status_style = {
+            "textAlign": "center", "fontSize": "13px", "fontWeight": "bold",
+            "padding": "4px", "borderRadius": "4px",
+            "backgroundColor": "#f0f0f0", "color": "#333",
+        }
 
     # Angles plot
     fig_angles = {
@@ -275,7 +411,7 @@ def update_graphs(n_intervals, n_clicks, *slider_values):
             {"x": time_data, "y": tau2, "name": "τ2", "type": "scatter"},
         ],
         "layout": {"title": "Applied Torques", "xaxis": {"title": "Time [s]"},
-                   "yaxis": {"title": "Torque [N⋅m]"}, "margin": {"t": 40}},
+                   "yaxis": {"title": "Torque [N·m]"}, "margin": {"t": 40}},
     }
 
     # Phase portrait
@@ -288,7 +424,7 @@ def update_graphs(n_intervals, n_clicks, *slider_values):
                    "yaxis": {"title": "Angular Velocity [rad/s]"}, "margin": {"t": 40}},
     }
 
-    return fig_angles, fig_vel, fig_torque, fig_phase
+    return fig_angles, fig_vel, fig_torque, fig_phase, status_text, status_style
 
 
 if __name__ == "__main__":
