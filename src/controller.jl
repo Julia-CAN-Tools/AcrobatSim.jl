@@ -3,11 +3,7 @@ import SystemSimulator as SS
 mutable struct AcrobotController <: SS.AbstractController
     params::Dict{String,Float64}
     state::Vector{Float64}   # [θ1, θ2, ω1, ω2]
-    active::Bool
-    finished::Bool
-    elapsed::Float64
-    last_start_count::Float64
-    last_stop_count::Float64
+    lifecycle::SS.ControllerLifecycle
 end
 
 function AcrobotController()
@@ -41,7 +37,7 @@ function AcrobotController()
         "duration"  => 300.0,
     )
     state = [1.0, 0.5, 0.0, 0.0]
-    return AcrobotController(params, state, false, false, 0.0, 0.0, 0.0)
+    return AcrobotController(params, state, SS.ControllerLifecycle())
 end
 
 """
@@ -50,77 +46,44 @@ end
 Control callback for double pendulum simulation.
 Integrates physics only when active (between start/stop commands).
 """
+function _reset_to_ics!(ctrl::AcrobotController)
+    p = ctrl.params
+    ctrl.state[1] = p["theta1_0"]
+    ctrl.state[2] = p["theta2_0"]
+    ctrl.state[3] = p["omega1_0"]
+    ctrl.state[4] = p["omega2_0"]
+end
+
 function acrobot_callback(ctrl::AcrobotController, inputs, outputs, dt)
     p = ctrl.params
+    event = SS.update_lifecycle!(ctrl.lifecycle, p, dt)
 
-    start_count = get(p, "start_cmd", 0.0)
-    stop_count  = get(p, "stop_cmd", 0.0)
-    duration    = get(p, "duration", 300.0)
-
-    # Detect start event (rising count)
-    if start_count > ctrl.last_start_count
-        ctrl.last_start_count = start_count
-        ctrl.elapsed  = 0.0
-        ctrl.active   = true
-        ctrl.finished = false
-        # Reset state to ICs on start
-        ctrl.state[1] = p["theta1_0"]
-        ctrl.state[2] = p["theta2_0"]
-        ctrl.state[3] = p["omega1_0"]
-        ctrl.state[4] = p["omega2_0"]
-    end
-
-    # Detect stop event (rising count)
-    if stop_count > ctrl.last_stop_count
-        ctrl.last_stop_count = stop_count
-        if ctrl.active
-            ctrl.active   = false
-            ctrl.finished = true
-        end
+    # Reset state to ICs on start
+    if event == :started
+        _reset_to_ics!(ctrl)
     end
 
     # Reset state to initial conditions if requested (works while active)
     if p["reset"] >= 1.0
-        ctrl.state[1] = p["theta1_0"]
-        ctrl.state[2] = p["theta2_0"]
-        ctrl.state[3] = p["omega1_0"]
-        ctrl.state[4] = p["omega2_0"]
+        _reset_to_ics!(ctrl)
         p["reset"] = 0.0
     end
 
-    if ctrl.active
-        ctrl.elapsed += dt
-        p["elapsed"] = ctrl.elapsed
-        p["running"] = 1.0
+    if ctrl.lifecycle.active
+        # Read torque commands from CAN input (default 0.0)
+        τ1 = get(inputs, "can_torque.Tau1", 0.0)
+        τ2 = get(inputs, "can_torque.Tau2", 0.0)
 
-        if ctrl.elapsed > duration
-            # Duration expired
-            ctrl.active   = false
-            ctrl.finished = true
-            p["running"] = 0.0
-            # Still publish final state below
-        else
-            # Read torque commands from CAN input (default 0.0)
-            τ1 = get(inputs, "can_torque.Tau1", 0.0)
-            τ2 = get(inputs, "can_torque.Tau2", 0.0)
+        # Build physics params and integrate
+        ap = AcrobotParams(p)
+        n_sub = max(1, round(Int, p["n_substeps"]))
+        rk4_step!(ctrl.state, τ1, τ2, ap, dt, n_sub)
 
-            # Build physics params and integrate
-            ap = AcrobotParams(p)
-            n_sub = max(1, round(Int, p["n_substeps"]))
-            rk4_step!(ctrl.state, τ1, τ2, ap, dt, n_sub)
-
-            # Reset to ICs if integration produced NaN/Inf (numerical blowup)
-            if any(!isfinite, ctrl.state)
-                @warn "Numerical blowup detected — resetting state to initial conditions"
-                ctrl.state[1] = p["theta1_0"]
-                ctrl.state[2] = p["theta2_0"]
-                ctrl.state[3] = p["omega1_0"]
-                ctrl.state[4] = p["omega2_0"]
-            end
+        # Reset to ICs if integration produced NaN/Inf (numerical blowup)
+        if any(!isfinite, ctrl.state)
+            @warn "Numerical blowup detected — resetting state to initial conditions"
+            _reset_to_ics!(ctrl)
         end
-    else
-        p["elapsed"] = ctrl.elapsed
-        p["running"] = 0.0
     end
 
     # Always write current state to CAN output (frozen when not active)
