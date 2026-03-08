@@ -32,7 +32,7 @@ cfg = SS.SystemConfig(
 )
 
 # ── Build and start ───────────────────────────────────────────────────────
-ctrl = AcrobotController()
+ctrl = AcrobotSystem()
 runtime = SS.SystemRuntime(cfg, sf, ctrl)
 
 @info "Starting AcrobotSim" dt_ms=10 monitor_params=9100 monitor_stream=9101
