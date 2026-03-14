@@ -36,11 +36,11 @@ ctrl = AcrobotSystem()
 runtime = SS.SystemRuntime(cfg, sf, ctrl)
 
 @info "Starting AcrobotSim" dt_ms=10 monitor_params=9100 monitor_stream=9101
-@info "Params:" keys=sort(collect(keys(runtime.params)))
+@info "Params:" keys=SS.signal_names(runtime.params)
 @info "Signals:" keys=runtime.monitor.out_names
 @info "Waiting for start command from Dash UI — press Ctrl+C to shut down"
 
-SS.start!(runtime, acrobot_callback)
+SS.start!(runtime)
 
 try
     while !SS.stop_requested(sf)

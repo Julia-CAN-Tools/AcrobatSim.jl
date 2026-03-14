@@ -10,6 +10,16 @@ Usage:
     python app.py
 """
 
+from pathlib import Path
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SRT_DASH_ROOT = REPO_ROOT / "srt-dash"
+SRT_DASH_ROOT_STR = str(SRT_DASH_ROOT)
+if SRT_DASH_ROOT_STR in sys.path:
+    sys.path.remove(SRT_DASH_ROOT_STR)
+sys.path.insert(0, SRT_DASH_ROOT_STR)
+
 from srt_dash import AppConfig, ParamDef, PlotDef, TraceDef, build_app
 
 config = AppConfig(

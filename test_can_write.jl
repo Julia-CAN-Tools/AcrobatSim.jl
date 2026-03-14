@@ -26,11 +26,11 @@ cfg = SS.SystemConfig(
     joinpath(@__DIR__, "TestLog.csv"),
 )
 
-ctrl = AcrobotController()
+ctrl = AcrobotSystem()
 runtime = SS.SystemRuntime(cfg, sf, ctrl)
 
 @info "Starting without TcpMonitor"
-SS.start!(runtime, acrobot_callback)
+SS.start!(runtime)
 
 @info "Running for 5s..."
 sleep(5)

@@ -3,6 +3,7 @@
 
 Physical parameters for the double pendulum.
 """
+
 struct AcrobotParams
     m1::Float64    # Link 1 mass [kg]
     m2::Float64    # Link 2 mass [kg]
@@ -17,19 +18,35 @@ struct AcrobotParams
     b2::Float64    # Joint 2 damping [N⋅m⋅s/rad]
 end
 
-function AcrobotParams(d::Dict{String,Float64})
+function AcrobotParams(d::AbstractDict{String,<:Real})
     return AcrobotParams(
-        get(d, "m1", 1.0),
-        get(d, "m2", 1.0),
-        get(d, "l1", 1.0),
-        get(d, "l2", 1.0),
-        get(d, "lc1", 0.5),
-        get(d, "lc2", 0.5),
-        get(d, "I1", 0.0833),
-        get(d, "I2", 0.0833),
-        get(d, "g", 9.81),
-        get(d, "b1", 0.1),
-        get(d, "b2", 0.1),
+        Float64(get(d, "m1", 1.0)),
+        Float64(get(d, "m2", 1.0)),
+        Float64(get(d, "l1", 1.0)),
+        Float64(get(d, "l2", 1.0)),
+        Float64(get(d, "lc1", 0.5)),
+        Float64(get(d, "lc2", 0.5)),
+        Float64(get(d, "I1", 0.0833)),
+        Float64(get(d, "I2", 0.0833)),
+        Float64(get(d, "g", 9.81)),
+        Float64(get(d, "b1", 0.1)),
+        Float64(get(d, "b2", 0.1)),
+    )
+end
+
+function AcrobotParams(d::SS.SignalBuffer)
+    return AcrobotParams(
+        Float64(get(d, "m1", 1.0)),
+        Float64(get(d, "m2", 1.0)),
+        Float64(get(d, "l1", 1.0)),
+        Float64(get(d, "l2", 1.0)),
+        Float64(get(d, "lc1", 0.5)),
+        Float64(get(d, "lc2", 0.5)),
+        Float64(get(d, "I1", 0.0833)),
+        Float64(get(d, "I2", 0.0833)),
+        Float64(get(d, "g", 9.81)),
+        Float64(get(d, "b1", 0.1)),
+        Float64(get(d, "b2", 0.1)),
     )
 end
 

@@ -1,5 +1,7 @@
 module AcrobatSim
 
+import SystemSimulator as SS
+
 include("dynamics.jl")
 include("catalogs.jl")
 include("system.jl")
