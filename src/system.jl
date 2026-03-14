@@ -4,6 +4,9 @@ mutable struct AcrobotSystem <: SS.AbstractSystem
     params::Dict{String,Float64}
     state::Vector{Float64}   # [θ1, θ2, ω1, ω2]
     lifecycle::SS.SystemLifecycle
+    _rk4_ws::RK4Workspace
+    _cached_ap::AcrobotParams
+    _params_dirty::Bool
 end
 
 function AcrobotSystem()
@@ -37,7 +40,8 @@ function AcrobotSystem()
         "duration"  => 300.0,
     )
     state = [1.0, 0.5, 0.0, 0.0]
-    return AcrobotSystem(params, state, SS.SystemLifecycle())
+    return AcrobotSystem(params, state, SS.SystemLifecycle(),
+                         RK4Workspace(4), AcrobotParams(params), true)
 end
 
 """
@@ -74,10 +78,14 @@ function acrobot_callback(ctrl::AcrobotSystem, inputs, outputs, dt)
         τ1 = get(inputs, "can_torque.Tau1", 0.0)
         τ2 = get(inputs, "can_torque.Tau2", 0.0)
 
-        # Build physics params and integrate
-        ap = AcrobotParams(p)
+        # Rebuild cached AcrobotParams only when params have changed
+        if ctrl._params_dirty
+            ctrl._cached_ap = AcrobotParams(p)
+            ctrl._params_dirty = false
+        end
+
         n_sub = max(1, round(Int, p["n_substeps"]))
-        rk4_step!(ctrl.state, τ1, τ2, ap, dt, n_sub)
+        rk4_step!(ctrl.state, τ1, τ2, ctrl._cached_ap, dt, n_sub, ctrl._rk4_ws)
 
         # Reset to ICs if integration produced NaN/Inf (numerical blowup)
         if any(!isfinite, ctrl.state)

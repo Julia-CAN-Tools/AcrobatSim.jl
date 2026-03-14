@@ -90,20 +90,49 @@ function acrobot_dynamics!(dx::Vector{Float64}, x::Vector{Float64},
 end
 
 """
+    RK4Workspace
+
+Pre-allocated scratch vectors for the RK4 integrator. Avoids 5 heap allocations
+per callback invocation when stored on the system struct.
+"""
+struct RK4Workspace
+    k1::Vector{Float64}
+    k2::Vector{Float64}
+    k3::Vector{Float64}
+    k4::Vector{Float64}
+    xtmp::Vector{Float64}
+end
+
+RK4Workspace(n::Int=4) = RK4Workspace(
+    Vector{Float64}(undef, n),
+    Vector{Float64}(undef, n),
+    Vector{Float64}(undef, n),
+    Vector{Float64}(undef, n),
+    Vector{Float64}(undef, n),
+)
+
+"""
     rk4_step!(x, τ1, τ2, params, dt, n_substeps=10)
 
 Integrate state `x` forward by `dt` seconds using RK4 with `n_substeps` sub-steps.
 """
 function rk4_step!(x::Vector{Float64}, τ1::Float64, τ2::Float64,
                    p::AcrobotParams, dt::Float64, n_substeps::Int=10)
-    h = dt / n_substeps
-    k1 = Vector{Float64}(undef, 4)
-    k2 = Vector{Float64}(undef, 4)
-    k3 = Vector{Float64}(undef, 4)
-    k4 = Vector{Float64}(undef, 4)
-    xtmp = Vector{Float64}(undef, 4)
+    rk4_step!(x, τ1, τ2, p, dt, n_substeps, RK4Workspace(length(x)))
+end
 
-    for _ in 1:n_substeps
+"""
+    rk4_step!(x, τ1, τ2, params, dt, n_substeps, ws::RK4Workspace)
+
+Pre-allocated variant — zero heap allocations per call.
+"""
+function rk4_step!(x::Vector{Float64}, τ1::Float64, τ2::Float64,
+                   p::AcrobotParams, dt::Float64, n_substeps::Int,
+                   ws::RK4Workspace)
+    h = dt / n_substeps
+    k1, k2, k3, k4, xtmp = ws.k1, ws.k2, ws.k3, ws.k4, ws.xtmp
+
+    @inbounds for _ in 1:n_substeps
         acrobot_dynamics!(k1, x, τ1, τ2, p)
 
         @. xtmp = x + 0.5 * h * k1
